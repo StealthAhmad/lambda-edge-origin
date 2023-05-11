@@ -1,0 +1,65 @@
+import json
+import urllib.parse
+import boto3
+
+
+s3 = boto3.client('s3')
+
+def get_location(ip_address):
+    # Use the Google Maps API to get the viewer's location with latitude and longitude
+    url = f'https://maps.googleapis.com/maps/api/geocode/json?address={ip_address}&key=<YOUR_API_KEY>'
+    response = requests.get(url)
+    if response.ok:
+        location = response.json()['results'][0]['geometry']['location']
+        return location
+    return None
+
+def modify_html(html, viewer_ip):
+    # Replace the value of "ip_address" in the HTML code
+    html = html.replace('ip_address', viewer_ip)
+    # Get the viewer's location with latitude and longitude
+    location = get_location(viewer_ip)
+    if location:
+        # Add the viewer's location to the HTML code
+        html += f'<p>Viewer location: {location["lat"]}, {location["lng"]}</p>'
+    return html
+
+def lambda_handler(event, context):
+    # Terminate the request coming from CloudFront
+    request = event['Records'][0]['cf']['request']
+    headers = request['headers']
+    headers['x-lambdaedge-log-login-filter'] = [{'key': 'x-lambdaedge-log-login-filter', 'value': 'success'}]
+    return {'status': '403', 'statusDescription': 'Forbidden'}
+    
+    # Retrieve the origin response
+    response = event['Records'][0]['cf']['response']
+    
+    # Get the viewer IP address
+    viewer_ip = event['Records'][0]['cf']['request']['clientIp']
+    
+    # Check if the response is cached
+    if 'status' in response:
+        status = response['status']
+        if status.startswith('2'):
+            # Get the cached HTML content
+            content_encoding = response['headers'].get('content-encoding', [{'value': ''}])[0]['value']
+            if content_encoding == 'gzip':
+                content = gzip.decompress(response['body'].get('data', ''))
+            else:
+                content = response['body'].get('data', '')
+            
+            # Modify the HTML content
+            modified_content = modify_html(content.decode('utf-8'), viewer_ip)
+            
+            # Package the modified HTML code and response back to the client
+            response['body'] = {'data': modified_content.encode('utf-8')}
+            response['bodyEncoding'] = 'text'
+            response['headers']['content-length'] = [{'key': 'Content-Length', 'value': str(len(modified_content))}]
+            response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'text/html'}]
+            
+            # Write the response to S3 bucket
+            bucket_name = 'lambdaedge-logs-login-filter'
+            object_key = urllib.parse.unquote_plus(response['headers']['host'][0]['value'] + request['uri'])
+            s3.put_object(Bucket=bucket_name, Key=object_key, Body=modified_content)
+    
+    return response
