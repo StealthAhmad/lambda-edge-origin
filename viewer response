@@ -1,0 +1,19 @@
+import json
+import requests
+
+def lambda_handler(event, context):
+    response = event['Records'][0]['cf']['response']
+    
+    # Retrieve the viewer's IP address
+    viewer_ip = event['Records'][0]['cf']['request']['clientIp']
+    
+    # Use the Google Maps API to get the viewer's location
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={viewer_ip}&key=YOUR_API_KEY"
+    response_json = requests.get(url).json()
+    viewer_location = response_json['results'][0]['formatted_address']
+    
+    # Add the viewer's location as a custom header
+    headers = response['headers']
+    headers['X-Viewer-Location'] = [{'key': 'X-Viewer-Location', 'value': viewer_location}]
+    
+    return response
